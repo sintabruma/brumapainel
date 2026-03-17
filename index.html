@@ -129,6 +129,7 @@ input[type=range]{width:100%;accent-color:var(--red);}
   <button class="tab"         onclick="go('projecao',this)">Projeção Mensal</button>
   <button class="tab"         onclick="go('breakeven',this)">Break-Even</button>
   <button class="tab"         onclick="go('lancamentos',this)">Lançamentos</button>
+  <button class="tab"         onclick="go('vendas',this)">Vendas</button>
   <button class="tab"         onclick="go('sim',this)">Simulador</button>
   <button class="tab"         onclick="go('riscos',this)">Riscos</button>
 </div>
@@ -138,11 +139,12 @@ input[type=range]{width:100%;accent-color:var(--red);}
   <div id="pane-projecao"    class="pane"><div class="empty-state">Sincronize para carregar a Projeção Mensal.</div></div>
   <div id="pane-breakeven"   class="pane"><div class="empty-state">Sincronize para carregar o Break-Even.</div></div>
   <div id="pane-lancamentos" class="pane"></div>
+  <div id="pane-vendas"      class="pane"></div>
   <div id="pane-sim"         class="pane"></div>
   <div id="pane-riscos"      class="pane"></div>
 </div>
 
-<div class="footer">Bruma · Painel conectado ao Google Sheets · Dados da planilha Bruma_Gestao_Financeira_v4</div>
+<div class="footer">Bruma · Painel conectado ao Google Sheets · Dados da planilha Bruma_Gestao_Financeira_v6 · Jan a Dez/26 · github.com/sintabruma/brumapainel</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
@@ -197,11 +199,12 @@ async function loadAll(){
   sb.className='sbar'; sb.textContent='Sincronizando com Google Sheets...';
   btn.classList.add('loading'); btn.textContent='↻ Carregando...';
   try{
-    var [premRows,projRows,beRows,lancRows] = await Promise.all([
+    var [premRows,projRows,beRows,lancRows,vendasRows] = await Promise.all([
       fetchSheet('Premissas'),
       fetchSheet('Projeção Mensal'),
       fetchSheet('Break-Even'),
-      fetchSheet('Lançamentos')
+      fetchSheet('Lançamentos'),
+      fetchSheet('Vendas')
     ]);
 
     // ── Premissas ──
@@ -248,7 +251,7 @@ async function loadAll(){
     var projLookup={};
     projRows.forEach(r=>{ var k=norm(r[0]); if(k) projLookup[k]=r; });
     function getProj(label){ return projLookup[norm(label)]||[]; }
-    var MONTHS=['Mar/26','Abr/26','Mai/26','Jun/26','Jul/26','Ago/26'];
+    var MONTHS=['Jan/26','Fev/26','Mar/26','Abr/26','Mai/26','Jun/26','Jul/26','Ago/26','Set/26','Out/26','Nov/26','Dez/26'];
     var units_row=getProj('unidades vendidas');
     var receita_row=getProj('receita bruta');
     var totalvar_row=getProj('total variável');
@@ -322,11 +325,43 @@ async function loadAll(){
     }
     L.totalGasto=Object.values(L.byCat).reduce((s,v)=>s+v.total,0);
 
+
+    // ── Vendas ──
+    var V = {entries:[], totalReceita:0, totalCusto:0, totalLucro:0,
+              byCanalRec:{}, byMes:{}, pendentes:0, taxasTotal:0};
+    var STATUS_COLS = {
+      'Pago':'#1D6B4A','Enviado':'#8A5C0A','Pendente':'#9B1B2A','Cancelado':'#7A5C5C'
+    };
+    for(var vi=3; vi<vendasRows.length; vi++){
+      var vr=vendasRows[vi];
+      var vdata=vr[0]||'', vperf=vr[1]||'', vcanal=vr[2]||'';
+      var vpgto=vr[3]||'', vstatus=vr[4]||'';
+      var vpreco=parseNum(vr[5]), vcperf=parseNum(vr[6]);
+      var vcemb=parseNum(vr[7]), vfrete=parseNum(vr[8]);
+      var vtaxa=parseNum(vr[9]), vcusto=parseNum(vr[10]);
+      var vlucro=parseNum(vr[11]), vmes=vr[12]||'';
+      if(!vperf||vpreco<=0) continue;
+      V.entries.push({data:vdata,perf:vperf,canal:vcanal,pgto:vpgto,
+        status:vstatus,preco:vpreco,cperf:vcperf,cemb:vcemb,frete:vfrete,
+        taxa:vtaxa,custo:vcusto,lucro:vlucro,mes:vmes});
+      V.totalReceita+=vpreco; V.totalCusto+=vcusto; V.totalLucro+=vlucro;
+      V.taxasTotal+=vtaxa;
+      if(vstatus==='Pendente') V.pendentes++;
+      if(!V.byCanalRec[vcanal]) V.byCanalRec[vcanal]={qtd:0,receita:0,lucro:0};
+      V.byCanalRec[vcanal].qtd++; V.byCanalRec[vcanal].receita+=vpreco;
+      V.byCanalRec[vcanal].lucro+=vlucro;
+      if(vmes){
+        if(!V.byMes[vmes]) V.byMes[vmes]={qtd:0,receita:0,lucro:0};
+        V.byMes[vmes].qtd++; V.byMes[vmes].receita+=vpreco; V.byMes[vmes].lucro+=vlucro;
+      }
+    }
+    V.margemMedia = V.totalReceita>0 ? V.totalLucro/V.totalReceita : 0;
+
     sb.className='sbar ok';
-    sb.textContent='✓ Sincronizado · '+L.entries.length+' lançamento(s) · '+new Date().toLocaleTimeString('pt-BR');
+    sb.textContent='✓ Sincronizado · '+V.entries.length+' venda(s) · '+L.entries.length+' lançamento(s) · '+new Date().toLocaleTimeString('pt-BR');
     btn.classList.remove('loading'); btn.textContent='↻ Sincronizar';
 
-    renderVisao(); renderProjecao(); renderBreakEven(); renderLancamentos(); renderRiscos();
+    renderVisao(); renderProjecao(); renderBreakEven(); renderLancamentos(); renderVendas(); renderRiscos();
     if(document.getElementById('pane-sim').classList.contains('active')) renderSim();
   } catch(e){
     sb.className='sbar err';
@@ -387,6 +422,31 @@ function renderVisao(){
 
 // ── PROJEÇÃO MENSAL ──
 function renderProjecao(){
+  // Re-parse with new structure
+  var pMonths=['Jan/26','Fev/26','Mar/26','Abr/26','Mai/26','Jun/26','Jul/26','Ago/26','Set/26','Out/26','Nov/26','Dez/26'];
+  function getProjRow(lbl){ return projLookup[norm(lbl)]||[]; }
+  function projVals(lbl){ return pMonths.map((_,i)=>parseNum(getProjRow(lbl)[i+2])||0); }
+
+  var unidPlan   = projVals('unidades planejadas');
+  var unidReal   = projVals('unidades reais (vendas)');
+  var recPlan    = projVals('receita planejada');
+  var recReal    = projVals('receita real (vendas)');
+  var recConsol  = projVals('receita (real se houver, planejado se não)');
+  var fixPlan    = projVals('custo fixo planejado');
+  var fixReal    = projVals('custo fixo real (lançamentos)');
+  var custoTotal = projVals('custo total (real se houver, planejado se não)');
+  var lucroPlan  = projVals('lucro planejado');
+  var lucroReal  = projVals('lucro real');
+  var lucroConsol= projVals('lucro líquido (real se houver, planejado se não)');
+  var margemPct  = projVals('margem líquida (%)');
+  var capitalRest= projVals('capital restante');
+
+  // Update global P for other components
+  P.months=pMonths; P.receita=recConsol; P.lucro=lucroConsol;
+  P.totalVar=pMonths.map((_,i)=>custoTotal[i]-fixPlan[i]);
+  P.totalFix=fixPlan; P.capital=capitalRest; P.margemPct=margemPct;
+
+
   var rows=[
     {lbl:'Unidades vendidas',    vals:P.units,    fmt:'int', bold:false},
     {lbl:'Receita bruta',        vals:P.receita,  fmt:'brl', bold:false},
@@ -413,7 +473,7 @@ function renderProjecao(){
   }).join('');
 
   document.getElementById('pane-projecao').innerHTML=
-    '<div class="sec">Projeção mensal · valores reais da planilha</div>'+
+    '<div class="sec">Projeção Jan a Dez/26 · valores reais da planilha</div>'+
     '<div class="alert info">Os valores abaixo são lidos diretamente da aba "Projeção Mensal" da sua planilha. Altere as unidades na planilha e sincronize para atualizar.</div>'+
     '<div class="proj-wrap"><table class="tbl"><thead>'+hdr+'</thead><tbody>'+body+'</tbody></table></div>'+
     '<div class="sec">Receita vs custos vs lucro</div>'+
@@ -638,6 +698,96 @@ function calcSim(){
       plugins:{legend:{display:false},tooltip:{callbacks:{label:v=>'R$'+v.raw.toLocaleString('pt-BR')}}},
       scales:{y:{ticks:{color:'#7A5C5C',font:{size:10},callback:v=>'R$'+Math.round(v/1000)+'k'}},x:{ticks:{color:'#7A5C5C',font:{size:10},autoSkip:false}}}}
   });
+}
+
+
+// ── VENDAS ──
+function renderVendas(){
+  var recent=[...V.entries].reverse().slice(0,15);
+  var recentHTML='';
+  if(V.entries.length===0){
+    recentHTML='<div class="empty-state">Nenhuma venda registrada ainda. Adicione na aba "Vendas" da planilha e sincronize.</div>';
+  } else {
+    recentHTML='<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px;font-size:12px;">';
+    recentHTML+='<div style="display:grid;grid-template-columns:90px 1fr 110px 90px 80px 90px 90px;gap:8px;padding:8px 12px;background:var(--cream-d);font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;">'+
+      '<span>Data</span><span>Perfume</span><span>Canal</span><span>Pagto</span><span>Status</span><span>Preço</span><span>Lucro</span></div>';
+    recent.forEach(e=>{
+      var statusClr=e.status==='Pago'?'var(--green)':e.status==='Enviado'?'var(--amber)':e.status==='Cancelado'?'var(--muted)':'var(--red)';
+      var lucroClr=e.lucro>=0?'var(--green)':'var(--red)';
+      var canalBadge=e.canal==='Site'?'<span class="badge warn">Site</span>':'<span class="badge ok">PIX</span>';
+      recentHTML+='<div style="display:grid;grid-template-columns:90px 1fr 110px 90px 80px 90px 90px;gap:8px;padding:8px 12px;border-top:1px solid var(--border);align-items:center;">'+
+        '<span style="color:var(--muted);font-size:11px;">'+e.data+'</span>'+
+        '<span style="font-weight:500;">'+e.perf+'</span>'+
+        '<span>'+canalBadge+'</span>'+
+        '<span style="color:var(--muted);">'+e.pgto+'</span>'+
+        '<span style="color:'+statusClr+';font-weight:600;font-size:11px;">'+e.status+'</span>'+
+        '<span style="text-align:right;font-weight:600;">'+brl(e.preco)+'</span>'+
+        '<span style="text-align:right;font-weight:600;color:'+lucroClr+'">'+brl(e.lucro)+'</span>'+
+        '</div>';
+    });
+    if(V.entries.length>15) recentHTML+='<div style="padding:8px 12px;font-size:11px;color:var(--muted);text-align:center;">+ mais '+(V.entries.length-15)+' vendas na planilha</div>';
+    recentHTML+='</div>';
+  }
+
+  // Canal breakdown
+  var canais=Object.keys(V.byCanalRec);
+  var canalRows=canais.map(c=>{
+    var v=V.byCanalRec[c];
+    var mg=v.receita>0?((v.lucro/v.receita)*100).toFixed(1)+'%':'—';
+    return '<tr><td>'+c+'</td><td>'+v.qtd+'</td><td>'+brl(v.receita)+'</td><td style="color:var(--green)">'+brl(v.lucro)+'</td><td style="color:var(--muted)">'+mg+'</td></tr>';
+  }).join('')||'<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--muted);font-style:italic;">Sem vendas ainda</td></tr>';
+
+  // Month breakdown
+  var meses=['Jan/26','Fev/26','Mar/26','Abr/26','Mai/26','Jun/26','Jul/26','Ago/26','Set/26','Out/26','Nov/26','Dez/26'];
+  var mesRows=meses.filter(m=>V.byMes[m]).map(m=>{
+    var v=V.byMes[m];
+    var mg=v.receita>0?((v.lucro/v.receita)*100).toFixed(1)+'%':'—';
+    return '<tr><td>'+m+'</td><td>'+v.qtd+'</td><td>'+brl(v.receita)+'</td><td style="color:var(--green)">'+brl(v.lucro)+'</td><td style="color:var(--muted)">'+mg+'</td></tr>';
+  }).join('')||'<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--muted);font-style:italic;">Sem vendas por mês ainda</td></tr>';
+
+  var taxaNote=V.taxasTotal>0?'<div class="tip">Total pago em taxas de cartão: <strong>'+brl(V.taxasTotal)+'</strong> — equivale a '+(V.totalReceita>0?((V.taxasTotal/V.totalReceita)*100).toFixed(1):'0')+'% da receita</div>':'';
+
+  document.getElementById('pane-vendas').innerHTML=
+    '<div class="sec">Últimas vendas registradas</div>'+recentHTML+
+    taxaNote+
+    '<div class="cards">'+
+    '<div class="card g"><div class="clbl">Total vendido</div><div class="cval pos">'+brl0(V.totalReceita)+'</div><div class="csub">'+V.entries.length+' vendas</div></div>'+
+    '<div class="card r"><div class="clbl">Custo total</div><div class="cval neg">'+brl0(V.totalCusto)+'</div></div>'+
+    '<div class="card g"><div class="clbl">Lucro bruto</div><div class="cval pos">'+brl0(V.totalLucro)+'</div><div class="csub">margem '+pct(V.margemMedia)+'</div></div>'+
+    '<div class="card a"><div class="clbl">Pendentes</div><div class="cval warn">'+V.pendentes+'</div><div class="csub">vendas a receber</div></div>'+
+    '</div>'+
+    '<div class="sec">Por canal de venda</div>'+
+    '<table class="tbl"><tr><th>Canal</th><th>Qtd</th><th>Receita</th><th>Lucro</th><th>Margem</th></tr>'+canalRows+'</table>'+
+    (V.entries.length>0?'<div class="cw"><canvas id="vchart"></canvas></div><div class="leg" id="vleg"></div>':'')+
+    '<div class="div"></div>'+
+    '<div class="sec">Por mês</div>'+
+    '<table class="tbl"><tr><th>Mês</th><th>Qtd</th><th>Receita</th><th>Lucro</th><th>Margem</th></tr>'+mesRows+'</table>'+
+    (Object.keys(V.byMes).length>0?'<div class="cw"><canvas id="vmeschart"></canvas></div>':'');
+
+  if(V.entries.length>0){
+    var cColors=['#9B1B2A','#1D6B4A'];
+    new Chart(document.getElementById('vchart'),{type:'doughnut',
+      data:{labels:canais,datasets:[{data:canais.map(c=>V.byCanalRec[c].receita),
+        backgroundColor:cColors,borderWidth:2,borderColor:'#F2EDE6'}]},
+      options:{responsive:true,maintainAspectRatio:false,cutout:'65%',
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:v=>v.label+': '+brl(v.raw)}}}}
+    });
+    document.getElementById('vleg').innerHTML=canais.map((c,i)=>
+      '<span><span class="ld" style="background:'+cColors[i]+'"></span>'+c+' · '+brl0(V.byCanalRec[c].receita)+'</span>').join('');
+  }
+  if(Object.keys(V.byMes).length>0){
+    var ml=meses.filter(m=>V.byMes[m]);
+    new Chart(document.getElementById('vmeschart'),{type:'bar',
+      data:{labels:ml,datasets:[
+        {label:'Receita',data:ml.map(m=>V.byMes[m].receita),backgroundColor:'#9B1B2A',borderRadius:4},
+        {label:'Lucro',  data:ml.map(m=>V.byMes[m].lucro),  backgroundColor:'#1D6B4A',borderRadius:4}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:v=>v.dataset.label+': '+brl(v.raw)}}},
+        scales:{y:{ticks:{color:'#7A5C5C',font:{size:10},callback:v=>'R$'+Math.round(v/1000)+'k'}},
+                x:{ticks:{color:'#7A5C5C',font:{size:10},autoSkip:false}}}}
+    });
+  }
 }
 
 // ── RISCOS ──
